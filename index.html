@@ -140,7 +140,8 @@
     // 1. 前往：https://data.gov.hk/en-data/dataset/hk-hko-rss-gridded-rainfall-nowcast-in-hong-kong
     // 2. 在 Data Resources 裏選 "Gridded rainfall nowcast in Hong Kong (English) - CSV"
     // 3. 進入 Details 頁面，按 Download/API，把那條 URL 貼到下面
-    const RAIN_URL = "https://corsproxy.io/?https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast.csv";
+    const RAIN_URL = "./proxy.html?url=" + encodeURIComponent("https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast.csv");
+
 
     // 要顯示幾個 half-hour time step（4 = 2小時）
     const STEPS = 4;
@@ -305,6 +306,7 @@
   </script>
 </body>
 </html>
+
 
 
 
