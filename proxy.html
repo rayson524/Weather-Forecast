@@ -1,21 +1,11 @@
 <!DOCTYPE html>
-<html>
-<body>
 <script>
-const urlParams = new URLSearchParams(window.location.search);
-const target = urlParams.get('url');
-if (!target) {
-  document.body.innerHTML = 'Usage: /proxy.html?url=https://example.com';
-} else {
-  fetch(target)
+const url = new URLSearchParams(location.search).get('url');
+if (url) {
+  fetch(decodeURIComponent(url))
     .then(r => r.text())
     .then(text => {
-      document.body.innerHTML = '<pre style="white-space:pre-wrap">' + text + '</pre>';
-    })
-    .catch(e => {
-      document.body.innerHTML = 'Error: ' + e;
+      document.body.innerHTML = '<pre>' + text + '</pre>';
     });
 }
 </script>
-</body>
-</html>
