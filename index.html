@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>未來2小時降雨預報（指定地點）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   "Microsoft JhengHei", system-ui, sans-serif;
+      font-size: 14px;
+      background: #f5f5f5;
+      color: #222;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      padding: 12px 14px;
+      box-sizing: border-box;
+      max-width: 380px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 11px;
+      color: #777;
+    }
+    .location {
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: #444;
+    }
+    .status {
+      font-size: 12px;
+      margin-bottom: 6px;
+      color: #555;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 2px 4px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    th {
+      background: #f0f0f0;
+      font-weight: 600;
+    }
+    .rain-strong {
+      color: #b00020;
+      font-weight: 600;
+    }
+    .rain-light {
+      color: #0b8043;
+    }
+    .footer-note {
+      margin-top: 6px;
+      font-size: 10px;
+      color: #777;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #111;
+        color: #eee;
+      }
+      .card {
+        background: #1d1d1f;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+      }
+      th, td {
+        border-color: #444;
+      }
+      th {
+        background: #333;
+      }
+      .subtitle, .location, .status, .footer-note {
+        color: #aaa;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="title">未來2小時降雨預報</div>
+      <div class="subtitle">香港天文台格網臨近預報</div>
+    </div>
+    <div id="location" class="location"></div>
+    <div id="status" class="status">載入中…</div>
+
+    <table id="rain-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>半小時完結時間</th>
+          <th>雨量 (mm)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="footer-note">
+      資料每約12分鐘更新一次，為臨時數據，僅供參考。
+    </div>
+  </div>
+
+  <script>
+    // ========= 1. 設定區 =========
+
+    // 目標位置（請改成你關心的地點座標）
+    // 例如你之前給的邊界：
+    // 最小X: 113.81, 最大X: 114.45, 最小Y: 22.15, 最大Y: 22.62
+    // 中心大約在：
+    //   經度 (X): (113.81 + 114.45) / 2 ≈ 114.13
+    //   緯度 (Y): (22.15 + 22.62) / 2 ≈ 22.385
+    const TARGET_LAT = 22.385;   // 緯度
+    const TARGET_LON = 114.130;  // 經度
+
+    // 從 DATA.GOV.HK 資源頁複製的 CSV 連結（英文 CSV 版本為例）：
+    // 步驟：
+    // 1. 前往：https://data.gov.hk/en-data/dataset/hk-hko-rss-gridded-rainfall-nowcast-in-hong-kong
+    // 2. 在 Data Resources 裏選 "Gridded rainfall nowcast in Hong Kong (English) - CSV"
+    // 3. 進入 Details 頁面，按 Download/API，把那條 URL 貼到下面
+    const RAIN_URL = https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast.csv;
+
+    // 要顯示幾個 half-hour time step（4 = 2小時）
+    const STEPS = 4;
+
+    // ========= 2. 工具函數 =========
+
+    // 簡單距離平方（平面假設，在香港範圍足夠）
+    function distanceSq(lat1, lon1, lat2, lon2) {
+      const dLat = lat1 - lat2;
+      const dLon = lon1 - lon2;
+      return dLat * dLat + dLon * dLon;
+    }
+
+    // 將 YYYYMMDDHHMM 格式轉成人類可讀字串
+    function formatYmdHm(s) {
+      if (!s || s.length !== 12) return s || '';
+      const y = s.slice(0, 4);
+      const m = s.slice(4, 6);
+      const d = s.slice(6, 8);
+      const hh = s.slice(8, 10);
+      const mm = s.slice(10, 12);
+      return `${m}/${d} ${hh}:${mm}`;
+    }
+
+    function classifyRain(rain) {
+      if (isNaN(rain)) return '';
+      if (rain >= 10) return 'heavy';
+      if (rain >= 1) return 'moderate';
+      if (rain > 0) return 'light';
+      return 'none';
+    }
+
+    // ========= 3. 主流程：抓取 + 計算 + 綁定 UI =========
+
+    async function loadRainForLocation() {
+      const statusEl = document.getElementById('status');
+      const locEl = document.getElementById('location');
+      const table = document.getElementById('rain-table');
+      const tbody = table.querySelector('tbody');
+
+      locEl.textContent =
+        `位置 (緯度, 經度): ${TARGET_LAT.toFixed(3)}, ${TARGET_LON.toFixed(3)}`;
+
+      if (!RAIN_URL || RAIN_URL.startsWith('【')) {
+        statusEl.textContent = '請先在程式內設定 RAIN_URL（DATA.GOV.HK 的 CSV API 連結）。';
+        return;
+      }
+
+      try {
+        statusEl.textContent = '載入中…';
+
+        const res = await fetch(RAIN_URL);
+        if (!res.ok) {
+          throw new Error('Network error: ' + res.status);
+        }
+        const text = await res.text();
+
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) {
+          statusEl.textContent = '暫時沒有數據';
+          return;
+        }
+
+        // Row 1: header
+        const header = lines[0].split(',');
+        // Row 2..n: data
+        const rawRows = lines.slice(1);
+
+        const rows = [];
+        for (const line of rawRows) {
+          const cols = line.split(',');
+          if (cols.length < 5) continue;
+
+          const updateTime = cols[0].trim();
+          const endTime = cols[1].trim();
+          const lat = parseFloat(cols[2]);
+          const lon = parseFloat(cols[3]);
+          const rain = parseFloat(cols[4]);
+
+          if (Number.isNaN(lat) || Number.isNaN(lon)) continue;
+
+          rows.push({ updateTime, endTime, lat, lon, rain });
+        }
+
+        if (rows.length === 0) {
+          statusEl.textContent = '沒有可用的數據列';
+          return;
+        }
+
+        // 1. 找出與目標點距離最近的格網
+        let bestLat = null;
+        let bestLon = null;
+        let bestDist = Infinity;
+
+        for (const r of rows) {
+          const dist = distanceSq(r.lat, r.lon, TARGET_LAT, TARGET_LON);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestLat = r.lat;
+            bestLon = r.lon;
+          }
+        }
+
+        if (bestLat === null) {
+          statusEl.textContent = '無法找到任何格網點';
+          return;
+        }
+
+        // 2. 過濾出該格網的所有 time steps
+        const gridRows = rows.filter(
+          (r) =>
+            Math.abs(r.lat - bestLat) < 1e-6 &&
+            Math.abs(r.lon - bestLon) < 1e-6
+        );
+
+        if (gridRows.length === 0) {
+          statusEl.textContent = '沒有對應格網的預報數據';
+          return;
+        }
+
+        // 3. 按完結時間排序，取前 STEPS 個
+        gridRows.sort((a, b) => a.endTime.localeCompare(b.endTime));
+        const selected = gridRows.slice(0, STEPS);
+
+        // 4. 顯示到表格
+        tbody.innerHTML = '';
+        for (const r of selected) {
+          const tr = document.createElement('tr');
+
+          const tdEnd = document.createElement('td');
+          tdEnd.textContent = formatYmdHm(r.endTime);
+
+          const tdRain = document.createElement('td');
+          const rainStr = Number.isNaN(r.rain) ? '-' : r.rain.toFixed(1);
+          tdRain.textContent = rainStr;
+
+          const level = classifyRain(r.rain);
+          if (level === 'heavy') {
+            tdRain.classList.add('rain-strong');
+          } else if (level === 'light' || level === 'moderate') {
+            tdRain.classList.add('rain-light');
+          }
+
+          tr.appendChild(tdEnd);
+          tr.appendChild(tdRain);
+          tbody.appendChild(tr);
+        }
+
+        statusEl.textContent = `最近格網中心：(${bestLat.toFixed(3)}, ${bestLon.toFixed(3)})`;
+
+        table.style.display = '';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = '載入失敗：' + err.message;
+      }
+    }
+
+    // 頁面載入後立即抓一次
+    window.addEventListener('load', loadRainForLocation);
+    // 如要定時更新，可加入：
+    // setInterval(loadRainForLocation, 10 * 60 * 1000);
+  </script>
+</body>
+</html>
